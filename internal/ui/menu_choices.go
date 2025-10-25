@@ -14,6 +14,7 @@ func (m MenuModel) getMenuChoices() []string {
 				"List of Available Tools", 
 				"Setup Environment",
 				"Installation Configuration",
+				"🔧 Install BOBA to System",
 				"🔐 GitHub Authentication",
 			}
 		} else {
@@ -22,6 +23,7 @@ func (m MenuModel) getMenuChoices() []string {
 				"List of Available Tools", 
 				"Setup Environment",
 				"Installation Configuration",
+				"🔧 Install BOBA to System",
 			}
 		}
 	case InstallEverythingMenu:
@@ -45,6 +47,8 @@ func (m MenuModel) getMenuChoices() []string {
 		return m.getEnvironmentOverrideChoices()
 	case GitHubAuthMenu:
 		return []string{} // Auth model handles its own display
+	case SystemInstallMenu:
+		return m.getSystemInstallChoices()
 	default:
 		return []string{"← Back to Main Menu"}
 	}
@@ -447,4 +451,76 @@ func (m *MenuModel) getAuthenticationMessage() string {
 		return fmt.Sprintf("❌ Authentication Error: %s", m.authError)
 	}
 	return "Authentication required to access your repository"
+}
+
+func (m MenuModel) getSystemInstallChoices() []string {
+	if m.systemInstaller == nil {
+		return []string{
+			"❌ System installer not available",
+			"System installation requires proper initialization",
+			"← Back to Main Menu",
+		}
+	}
+	
+	if m.isLoading {
+		return []string{
+			"🔄 " + m.loadingMessage,
+			"Please wait...",
+			"← Back to Main Menu",
+		}
+	}
+	
+	if m.systemInstallResult != nil {
+		// Show installation result
+		var choices []string
+		if m.systemInstallResult.Success {
+			choices = append(choices, "✅ System Installation Successful!")
+			choices = append(choices, fmt.Sprintf("📍 Binary installed to: %s", m.systemInstaller.GetInstallationInfo()["install_path"]))
+			if m.systemInstallResult.ZshrcModified {
+				choices = append(choices, "🐚 Shell integration configured")
+			}
+			choices = append(choices, "")
+			choices = append(choices, m.systemInstallResult.Message)
+			choices = append(choices, "")
+			choices = append(choices, "🗑️ Uninstall from System")
+		} else {
+			choices = append(choices, "❌ System Installation Failed")
+			if m.systemInstallResult.Error != nil {
+				choices = append(choices, fmt.Sprintf("Error: %s", m.systemInstallResult.Error.Error()))
+			}
+			choices = append(choices, "")
+			choices = append(choices, "🔄 Retry Installation")
+		}
+		choices = append(choices, "← Back to Main Menu")
+		return choices
+	}
+	
+	// Show installation options
+	info := m.systemInstaller.GetInstallationInfo()
+	isInstalled := info["is_installed"].(bool)
+	requiresSudo := info["requires_sudo"].(bool)
+	
+	var choices []string
+	
+	if isInstalled {
+		choices = append(choices, "✅ BOBA is already installed system-wide")
+		choices = append(choices, fmt.Sprintf("📍 Location: %s", info["install_path"]))
+		choices = append(choices, "")
+		choices = append(choices, "🔄 Reinstall BOBA")
+		choices = append(choices, "🗑️ Uninstall from System")
+	} else {
+		choices = append(choices, "🔧 Install BOBA to System")
+		choices = append(choices, fmt.Sprintf("📍 Will install to: %s", info["install_path"]))
+		if requiresSudo {
+			choices = append(choices, "⚠️  Requires sudo privileges")
+		}
+		choices = append(choices, "🐚 Will configure zsh shell integration")
+		choices = append(choices, "")
+		choices = append(choices, "▶️ Start System Installation")
+	}
+	
+	choices = append(choices, "ℹ️  View Installation Details")
+	choices = append(choices, "← Back to Main Menu")
+	
+	return choices
 }

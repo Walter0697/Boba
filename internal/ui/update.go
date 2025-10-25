@@ -99,8 +99,6 @@ func (m MenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Handle installation progress messages
 	if progressMsg, ok := msg.(InstallationProgressMsg); ok {
-		m.loadingMessage = fmt.Sprintf("%s: %s", progressMsg.ToolName, progressMsg.Status)
-		
 		// Update installation status cache if installation was successful
 		if progressMsg.Success {
 			m.toolInstallStatus[progressMsg.ToolName] = true
@@ -119,6 +117,19 @@ func (m MenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		
+		// Create a result to display
+		result := InstallationResult{
+			ToolName: progressMsg.ToolName,
+			Success:  progressMsg.Success,
+			Message:  progressMsg.Status,
+		}
+		
+		// Show results screen instead of immediately returning to menu
+		m.isLoading = false
+		m.installationInProgress = false
+		m.showingResults = true
+		m.installationResults = []InstallationResult{result}
+		m.loadingMessage = "" // Clear loading message
 		m.choices = m.getMenuChoices()
 		return m, nil
 	}
@@ -198,6 +209,21 @@ func (m MenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.applyNextEnvironment(nextMsg.Environments, nextMsg.CurrentIndex, nextMsg.Results)
 	}
 
+	// Handle system installation completion messages
+	if sysCompleteMsg, ok := msg.(SystemInstallationCompleteMsg); ok {
+		m.isLoading = false
+		m.systemInstallResult = sysCompleteMsg.Result
+		
+		if sysCompleteMsg.Result.Success {
+			m.loadingMessage = "System installation completed successfully"
+		} else {
+			m.loadingMessage = "System installation failed"
+		}
+		
+		m.choices = m.getMenuChoices()
+		return m, nil
+	}
+
 	// Handle installation completion messages
 	if completeMsg, ok := msg.(InstallationCompleteMsg); ok {
 		// Check if we're in Install Everything mode and have pending environments
@@ -226,7 +252,8 @@ func (m MenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.installationInProgress = false
 		m.installationResults = completeMsg.Results
 		m.isLoading = false
-		m.loadingMessage = fmt.Sprintf("Installation complete! %d items processed", len(completeMsg.Results))
+		m.showingResults = true // Show results screen instead of immediately returning to menu
+		m.loadingMessage = "" // Clear loading message
 		m.installEverythingMode = false
 		m.pendingEnvironments = nil
 		
@@ -298,6 +325,14 @@ func (m MenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Handle results screen - any key returns to menu
+		if m.showingResults {
+			m.showingResults = false
+			m.installationResults = []InstallationResult{}
+			m.choices = m.getMenuChoices()
+			return m, nil
+		}
+		
 		switch msg.String() {
 		case "ctrl+c":
 			// If installation is in progress, ask for confirmation

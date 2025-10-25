@@ -355,6 +355,210 @@ func (ie *InstallationEngine) GetPlatform() Platform {
 	return ie.platform
 }
 
+// ApplyEnvironment applies an environment configuration using its setup script
+func (ie *InstallationEngine) ApplyEnvironment(env parser.Environment) (*InstallationResult, error) {
+	if ie.githubClient == nil {
+		return nil, fmt.Errorf("GitHub client not initialized")
+	}
+	
+	startTime := time.Now()
+	
+	// Download the setup script
+	scriptContent, err := ie.githubClient.GetRepositoryContents(env.SetupScript)
+	if err != nil {
+		return &InstallationResult{
+			Success:  false,
+			Error:    fmt.Errorf("failed to download setup script: %w", err),
+			Duration: time.Since(startTime),
+		}, err
+	}
+	
+	// Create a temporary script file
+	scriptPath := filepath.Join(ie.tempDir, fmt.Sprintf("setup_%s.sh", env.FolderName))
+	if err := os.WriteFile(scriptPath, scriptContent, 0755); err != nil {
+		return &InstallationResult{
+			Success:  false,
+			Error:    fmt.Errorf("failed to create setup script file: %w", err),
+			Duration: time.Since(startTime),
+		}, err
+	}
+	
+	// Ensure cleanup
+	defer os.Remove(scriptPath)
+	
+	// Execute the setup script with security measures
+	result := ie.executeEnvironmentScriptSecurely(scriptPath, env.Name, env)
+	result.Duration = time.Since(startTime)
+	
+	return result, result.Error
+}
+
+// RestoreEnvironment restores an environment configuration using its restore script
+func (ie *InstallationEngine) RestoreEnvironment(env parser.Environment) (*InstallationResult, error) {
+	if ie.githubClient == nil {
+		return nil, fmt.Errorf("GitHub client not initialized")
+	}
+	
+	startTime := time.Now()
+	
+	// Download the restore script
+	scriptContent, err := ie.githubClient.GetRepositoryContents(env.RestoreScript)
+	if err != nil {
+		return &InstallationResult{
+			Success:  false,
+			Error:    fmt.Errorf("failed to download restore script: %w", err),
+			Duration: time.Since(startTime),
+		}, err
+	}
+	
+	// Create a temporary script file
+	scriptPath := filepath.Join(ie.tempDir, fmt.Sprintf("restore_%s.sh", env.FolderName))
+	if err := os.WriteFile(scriptPath, scriptContent, 0755); err != nil {
+		return &InstallationResult{
+			Success:  false,
+			Error:    fmt.Errorf("failed to create restore script file: %w", err),
+			Duration: time.Since(startTime),
+		}, err
+	}
+	
+	// Ensure cleanup
+	defer os.Remove(scriptPath)
+	
+	// Execute the restore script with security measures
+	result := ie.executeEnvironmentScriptSecurely(scriptPath, env.Name, env)
+	result.Duration = time.Since(startTime)
+	
+	return result, result.Error
+}
+
+// executeEnvironmentScriptSecurely executes an environment script with proper security measures and environment-specific variables
+func (ie *InstallationEngine) executeEnvironmentScriptSecurely(scriptPath, envName string, env parser.Environment) *InstallationResult {
+	// Create context with timeout (10 minutes max per environment setup)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	
+	// Prepare the command
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		// On Windows, use PowerShell or cmd to execute scripts
+		cmd = exec.CommandContext(ctx, "powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	} else {
+		// On Unix-like systems, use bash
+		cmd = exec.CommandContext(ctx, "/bin/bash", scriptPath)
+	}
+	
+	// Set up environment variables
+	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("BOBA_ENV_NAME=%s", envName),
+		fmt.Sprintf("BOBA_ENV_SHELL=%s", env.Shell),
+		fmt.Sprintf("BOBA_PLATFORM=%s", ie.platform.OS),
+		fmt.Sprintf("BOBA_PACKAGE_MANAGER=%s", ie.platform.PackageManager),
+		fmt.Sprintf("BOBA_TEMP_DIR=%s", ie.tempDir),
+		fmt.Sprintf("TMPDIR=%s", ie.tempDir),
+		fmt.Sprintf("TEMP=%s", ie.tempDir),
+		fmt.Sprintf("TMP=%s", ie.tempDir),
+	)
+	
+	// Set working directory to temp directory
+	cmd.Dir = ie.tempDir
+	
+	// Create pipes for stdout and stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return &InstallationResult{
+			Success: false,
+			Error:   fmt.Errorf("failed to create stdout pipe: %w", err),
+		}
+	}
+	
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return &InstallationResult{
+			Success: false,
+			Error:   fmt.Errorf("failed to create stderr pipe: %w", err),
+		}
+	}
+	
+	// Start the command
+	if err := cmd.Start(); err != nil {
+		return &InstallationResult{
+			Success: false,
+			Error:   fmt.Errorf("failed to start environment script: %w", err),
+		}
+	}
+	
+	// Capture output
+	var outputBuilder strings.Builder
+	
+	// Read stdout and stderr concurrently
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			line := scanner.Text()
+			outputBuilder.WriteString("STDOUT: " + line + "\n")
+		}
+	}()
+	
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			line := scanner.Text()
+			outputBuilder.WriteString("STDERR: " + line + "\n")
+		}
+	}()
+	
+	// Wait for the command to complete
+	err = cmd.Wait()
+	
+	// Get exit code
+	exitCode := 0
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			if status, ok := exitError.Sys().(syscall.WaitStatus); ok {
+				exitCode = status.ExitStatus()
+			}
+		}
+	}
+	
+	output := outputBuilder.String()
+	success := exitCode == 0
+	
+	result := &InstallationResult{
+		Success:  success,
+		Output:   output,
+		ExitCode: exitCode,
+	}
+	
+	if !success {
+		result.Error = fmt.Errorf("environment script execution failed with exit code %d: %s", exitCode, output)
+	}
+	
+	return result
+}
+
+// IsEnvironmentApplied checks if an environment is already applied (placeholder implementation)
+func (ie *InstallationEngine) IsEnvironmentApplied(env parser.Environment) bool {
+	// This is a placeholder implementation
+	// In a real implementation, this could check for:
+	// - Presence of specific config files
+	// - Environment variables
+	// - Shell configuration markers
+	// - etc.
+	return false
+}
+
+// VerifyEnvironmentApplication verifies that an environment was successfully applied
+func (ie *InstallationEngine) VerifyEnvironmentApplication(env parser.Environment) (bool, string) {
+	// This is a placeholder implementation
+	// In a real implementation, this could verify:
+	// - Config files are in place
+	// - Environment variables are set
+	// - Shell configurations are active
+	// - etc.
+	
+	return true, fmt.Sprintf("Environment '%s' appears to be applied successfully", env.Name)
+}
+
 // Cleanup removes temporary files and directories
 func (ie *InstallationEngine) Cleanup() error {
 	return os.RemoveAll(ie.tempDir)

@@ -53,11 +53,18 @@ func (m MenuModel) runInstallEverythingWithProgress() tea.Cmd {
 			}
 		}
 		
+		// Resolve dependencies and get installation order
+		resolver := m.dependencyResolver
+		orderedTools, orderedEnvironments, err := resolver.GetInstallationOrder(toolsToInstall, environmentsToApply)
+		if err != nil {
+			return fmt.Sprintf("error_installation: Failed to resolve dependencies: %v", err)
+		}
+		
 		// Start with tools phase
 		return InstallEverythingPhaseMsg{
 			Phase:        "tools",
-			Tools:        toolsToInstall,
-			Environments: environmentsToApply,
+			Tools:        orderedTools,
+			Environments: orderedEnvironments,
 		}
 	}
 }
@@ -179,14 +186,20 @@ func (m MenuModel) applyNextEnvironment(environments []parser.Environment, curre
 	return func() tea.Msg {
 		currentEnv := environments[currentIndex]
 		
-		// Apply the environment configuration
-		// This would typically involve setting up shell configurations, environment variables, etc.
-		// For now, we'll simulate the process
+		// Apply the environment configuration using the installation engine
+		installResult, err := m.installEngine.ApplyEnvironment(currentEnv)
+		
+		success := installResult.Success && err == nil
+		message := installResult.Output
+		if err != nil {
+			message = fmt.Sprintf("Environment application failed: %v", err)
+		}
+		
 		result := EnvironmentApplicationResult{
 			EnvironmentName: currentEnv.Name,
-			Success:         true,
-			Message:         fmt.Sprintf("Environment %s applied successfully", currentEnv.Name),
-			Error:           nil,
+			Success:         success,
+			Message:         message,
+			Error:           err,
 		}
 		
 		// Add result to the list

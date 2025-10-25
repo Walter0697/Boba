@@ -18,10 +18,18 @@ func InitialModel() MenuModel {
 	configManager.LoadConfig()
 	configManager.LoadCredentials()
 	
+	// Initialize system installer
+	systemInstaller, err := installer.NewSystemInstaller()
+	if err != nil {
+		// Log error but don't fail initialization
+		fmt.Printf("Warning: Failed to initialize system installer: %v\n", err)
+	}
+
 	model := MenuModel{
 		currentMenu:   MainMenu,
 		menuStack:     []MenuType{},
 		configManager: configManager,
+		systemInstaller: systemInstaller,
 		choices: []string{
 			"Install Everything",
 			"Update Everything",
@@ -35,6 +43,7 @@ func InitialModel() MenuModel {
 		loadingMessage: "",
 		installationInProgress: false,
 		installationResults: []InstallationResult{},
+		showingResults: false,
 		installEverythingMode: false,
 		pendingEnvironments: []parser.Environment{},
 		authError: "",
@@ -104,9 +113,10 @@ func initializeGitHubIntegration(model MenuModel, credentials config.Credentials
 		return model
 	}
 	
-	// Initialize parser and installation engine
+	// Initialize parser, installation engine, and dependency resolver
 	model.repoParser = parser.NewRepositoryParser(model.githubClient)
 	model.installEngine = installer.NewInstallationEngine(model.githubClient)
+	model.dependencyResolver = installer.NewDependencyResolver()
 	
 	return model
 }

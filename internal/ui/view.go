@@ -21,38 +21,33 @@ var (
 	
 	// Base styles
 	baseStyle = lipgloss.NewStyle().
-		Padding(1, 2).
-		Margin(0, 1)
+		Padding(0, 1).
+		Margin(0, 0)
 	
 	// Header styles
 	headerStyle = lipgloss.NewStyle().
 		Foreground(primaryColor).
 		Bold(true).
 		Align(lipgloss.Center).
-		Margin(1, 0)
+		Margin(0, 0)
 	
 	titleStyle = lipgloss.NewStyle().
 		Foreground(secondaryColor).
 		Bold(true).
 		Align(lipgloss.Center).
-		Padding(1, 0).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(secondaryColor).
-		Margin(0, 2)
+		Padding(0, 0).
+		Margin(0, 0)
 	
 	// Menu item styles
 	menuItemStyle = lipgloss.NewStyle().
-		Padding(0, 2).
-		Margin(0, 1)
+		Padding(0, 1).
+		Margin(0, 0)
 	
 	selectedMenuItemStyle = lipgloss.NewStyle().
 		Foreground(accentColor).
 		Bold(true).
-		Padding(0, 2).
-		Margin(0, 1).
-		Background(lipgloss.Color("235")).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(accentColor)
+		Padding(0, 1).
+		Margin(0, 0)
 	
 	// Help text style
 	helpStyle = lipgloss.NewStyle().
@@ -60,9 +55,7 @@ var (
 		Italic(true).
 		Align(lipgloss.Center).
 		Margin(1, 0).
-		Padding(1, 2).
-		Border(lipgloss.NormalBorder()).
-		BorderForeground(mutedColor)
+		Padding(0, 0)
 	
 	// Status styles
 	loadingStyle = lipgloss.NewStyle().
@@ -76,10 +69,8 @@ var (
 	errorStyle = lipgloss.NewStyle().
 		Foreground(errorColor).
 		Bold(true).
-		Padding(1, 2).
-		Border(lipgloss.ThickBorder()).
-		BorderForeground(errorColor).
-		Margin(1, 0)
+		Padding(0, 0).
+		Margin(0, 0)
 	
 	successStyle = lipgloss.NewStyle().
 		Foreground(successColor).
@@ -94,7 +85,7 @@ var (
 func (m MenuModel) getMenuTitle() string {
 	switch m.currentMenu {
 	case MainMenu:
-		return "🫧 Select an option: 🫧"
+		return "Select an option:"
 	case InstallEverythingMenu:
 		return "🚀 Install Everything"
 	case ToolsListMenu:
@@ -150,27 +141,32 @@ func (m MenuModel) View() string {
 		return m.renderInstallationScreen()
 	}
 	
+	// Handle showing results
+	if m.showingResults {
+		return m.renderResultsScreen()
+	}
+	
 	var s strings.Builder
 	
-	// ASCII Art Header with enhanced styling
+	// ASCII Art Header
 	s.WriteString(m.renderHeader())
 	s.WriteString("\n")
 	
-	// Menu title with enhanced border
+	// Menu title
 	s.WriteString(titleStyle.Render(m.getMenuTitle()))
-	s.WriteString("\n\n")
+	s.WriteString("\n")
 	
-	// Enhanced menu items with better visual hierarchy
+	// Menu items
 	s.WriteString(m.renderMenuItems())
 	s.WriteString("\n")
 	
-	// Enhanced help text with border
+	// Help text
 	s.WriteString(helpStyle.Render(m.getHelpText()))
 	
-	// Show authentication error if present
+	// Show authentication error as simple line
 	if m.authError != "" {
 		s.WriteString("\n")
-		s.WriteString(errorStyle.Render("⚠️  " + m.authError))
+		s.WriteString(errorStyle.Render(m.authError))
 	}
 	
 	return baseStyle.Render(s.String())
@@ -182,7 +178,7 @@ func (m MenuModel) renderHeader() string {
 	header := myFigure.String()
 	
 	// Add subtitle
-	subtitle := "🫧 Development Environment Setup Tool 🫧"
+	subtitle := "Development Environment Setup Tool"
 	
 	headerContent := header + "\n" + 
 		lipgloss.NewStyle().
@@ -194,23 +190,19 @@ func (m MenuModel) renderHeader() string {
 	return headerStyle.Render(headerContent)
 }
 
-// renderMenuItems creates enhanced menu items with better visual feedback
+// renderMenuItems creates simple menu items without borders
 func (m MenuModel) renderMenuItems() string {
 	var items []string
 	currentChoices := m.getMenuChoices()
 	
 	for i, choice := range currentChoices {
-		var itemText string
-		
 		if m.cursor == i {
-			// Selected item with enhanced styling
-			itemText = selectedMenuItemStyle.Render(fmt.Sprintf("▶ %s", choice))
+			// Selected item
+			items = append(items, selectedMenuItemStyle.Render(fmt.Sprintf("▶ %s", choice)))
 		} else {
 			// Regular item
-			itemText = menuItemStyle.Render(fmt.Sprintf("  %s", choice))
+			items = append(items, menuItemStyle.Render(fmt.Sprintf("  %s", choice)))
 		}
-		
-		items = append(items, itemText)
 	}
 	
 	return strings.Join(items, "\n")
@@ -274,6 +266,57 @@ func (m MenuModel) renderInstallationScreen() string {
 	// Installation help text
 	installHelp := "Installation is running... Press 'q' to cancel (may leave partial installations)"
 	s.WriteString(helpStyle.Render(installHelp))
+	
+	return baseStyle.Render(s.String())
+}
+
+// renderResultsScreen shows installation/environment results with option to return to menu
+func (m MenuModel) renderResultsScreen() string {
+	var s strings.Builder
+	
+	// ASCII Art Header
+	s.WriteString(m.renderHeader())
+	s.WriteString("\n")
+	
+	// Results title
+	resultsTitle := "📋 Operation Results"
+	s.WriteString(titleStyle.Render(resultsTitle))
+	s.WriteString("\n\n")
+	
+	// Show results
+	if len(m.installationResults) > 0 {
+		for _, result := range m.installationResults {
+			var resultStyle lipgloss.Style
+			var icon string
+			
+			if result.Success {
+				resultStyle = successStyle
+				icon = "✅"
+			} else {
+				resultStyle = errorStyle
+				icon = "❌"
+			}
+			
+			resultText := fmt.Sprintf("%s %s", icon, result.ToolName)
+			s.WriteString(resultStyle.Render(resultText))
+			s.WriteString("\n")
+			
+			// Show detailed message
+			if result.Message != "" {
+				messageLines := strings.Split(result.Message, "\n")
+				for _, line := range messageLines {
+					if strings.TrimSpace(line) != "" {
+						s.WriteString(fmt.Sprintf("   %s\n", line))
+					}
+				}
+			}
+			s.WriteString("\n")
+		}
+	}
+	
+	// Instructions
+	instructionText := "Press any key to return to the main menu"
+	s.WriteString(helpStyle.Render(instructionText))
 	
 	return baseStyle.Render(s.String())
 }

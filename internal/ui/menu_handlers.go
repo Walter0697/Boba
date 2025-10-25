@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"strings"
+	
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -15,6 +17,8 @@ func (m MenuModel) handleMenuSelection() (tea.Model, tea.Cmd) {
 		return m.handleConfigurationMenuSelection()
 	case RepositoryConfigMenu:
 		return m.handleRepositoryConfigMenuSelection()
+	case SystemInstallMenu:
+		return m.handleSystemInstallMenuSelection()
 	}
 	return m, nil
 }
@@ -36,6 +40,9 @@ func (m MenuModel) handleMainMenuSelection() (tea.Model, tea.Cmd) {
 			// Installation Configuration
 			m.navigateToMenu(ConfigurationMenu)
 		case 4:
+			// Install BOBA to System
+			m.navigateToMenu(SystemInstallMenu)
+		case 5:
 			// GitHub Authentication
 			return m.startAuthentication()
 		}
@@ -56,6 +63,9 @@ func (m MenuModel) handleMainMenuSelection() (tea.Model, tea.Cmd) {
 		case 3:
 			// Installation Configuration
 			m.navigateToMenu(ConfigurationMenu)
+		case 4:
+			// Install BOBA to System
+			m.navigateToMenu(SystemInstallMenu)
 		}
 	}
 	return m, nil
@@ -323,5 +333,67 @@ func (m MenuModel) handleEnvironmentOverrideOptions() (tea.Model, tea.Cmd) {
 		m.loadingMessage = "" // Clear error message
 		return m.fetchAndDisplayEnvironments()
 	}
+	return m, nil
+}
+
+func (m MenuModel) handleSystemInstallMenuSelection() (tea.Model, tea.Cmd) {
+	currentChoices := m.getMenuChoices()
+	if m.cursor == len(currentChoices)-1 {
+		// Back option
+		m.navigateBack()
+		return m, nil
+	}
+	
+	if m.systemInstaller == nil {
+		// System installer not available
+		return m, nil
+	}
+	
+	if m.isLoading {
+		// Don't allow actions while loading
+		return m, nil
+	}
+	
+	if m.systemInstallResult != nil {
+		// Handle post-installation options
+		if m.systemInstallResult.Success {
+			// Successful installation - check for uninstall option
+			if strings.Contains(currentChoices[m.cursor], "Uninstall from System") {
+				return m.startSystemUninstallation()
+			}
+		} else {
+			// Failed installation - check for retry option
+			if strings.Contains(currentChoices[m.cursor], "Retry Installation") {
+				m.systemInstallResult = nil // Clear previous result
+				return m.startSystemInstallation()
+			}
+		}
+		return m, nil
+	}
+	
+	// Handle installation options
+	info := m.systemInstaller.GetInstallationInfo()
+	isInstalled := info["is_installed"].(bool)
+	
+	if isInstalled {
+		// Already installed - handle reinstall or uninstall
+		switch {
+		case strings.Contains(currentChoices[m.cursor], "Reinstall BOBA"):
+			return m.startSystemInstallation()
+		case strings.Contains(currentChoices[m.cursor], "Uninstall from System"):
+			return m.startSystemUninstallation()
+		case strings.Contains(currentChoices[m.cursor], "View Installation Details"):
+			return m.showSystemInstallationDetails()
+		}
+	} else {
+		// Not installed - handle installation
+		switch {
+		case strings.Contains(currentChoices[m.cursor], "Start System Installation"):
+			return m.startSystemInstallation()
+		case strings.Contains(currentChoices[m.cursor], "View Installation Details"):
+			return m.showSystemInstallationDetails()
+		}
+	}
+	
 	return m, nil
 }

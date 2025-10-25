@@ -2,9 +2,11 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	
 	tea "github.com/charmbracelet/bubbletea"
 	"boba/internal/github"
+	"boba/internal/installer"
 	"boba/internal/parser"
 )
 
@@ -146,9 +148,9 @@ func (m MenuModel) startUpdateEverything() (tea.Model, tea.Cmd) {
 	return m, m.runUpdateEverythingWithProgress()
 }
 
-// installSingleTool installs a single selected tool
+// installSingleTool installs a single selected tool with dependency resolution
 func (m MenuModel) installSingleTool(tool parser.Tool) (tea.Model, tea.Cmd) {
-	if m.installEngine == nil {
+	if m.installEngine == nil || m.dependencyResolver == nil {
 		return m, func() tea.Msg {
 			return "error_installation: Installation engine not initialized"
 		}
@@ -156,54 +158,224 @@ func (m MenuModel) installSingleTool(tool parser.Tool) (tea.Model, tea.Cmd) {
 	
 	// Set loading state
 	m.isLoading = true
-	m.loadingMessage = fmt.Sprintf("Installing %s...", tool.Name)
+	m.loadingMessage = fmt.Sprintf("Resolving dependencies for %s...", tool.Name)
 	m.choices = m.getMenuChoices()
 	
 	return m, func() tea.Msg {
-		// Install the tool
-		result, err := m.installEngine.InstallTool(tool)
-		
-		success := result.Success && err == nil
-		message := result.Output
+		// Get all available tools to resolve dependencies
+		allTools, err := m.repoParser.GetTools()
 		if err != nil {
-			message = fmt.Sprintf("Installation failed: %v", err)
+			return InstallationProgressMsg{
+				ToolName: tool.Name,
+				Status:   fmt.Sprintf("Failed to fetch tools for dependency resolution: %v", err),
+				Success:  false,
+			}
 		}
 		
-		// Update installation status cache
-		if success {
-			m.toolInstallStatus[tool.Name] = true
-			
-			// Record successful installation
-			version := tool.Version
-			if version == "" {
-				version = "latest"
+		// Find dependencies for this tool
+		var toolsToInstall []parser.Tool
+		toolMap := make(map[string]parser.Tool)
+		for _, t := range allTools {
+			toolMap[t.Name] = t
+		}
+		
+		// Collect the tool and its dependencies
+		var collectDependencies func(toolName string, visited map[string]bool) error
+		collectDependencies = func(toolName string, visited map[string]bool) error {
+			if visited[toolName] {
+				return nil // Already processed
 			}
-			m.configManager.RecordToolInstallation(tool.Name, version, "manual")
+			
+			currentTool, exists := toolMap[toolName]
+			if !exists {
+				return fmt.Errorf("dependency not found: %s", toolName)
+			}
+			
+			visited[toolName] = true
+			
+			// First, collect dependencies
+			for _, dep := range currentTool.Dependencies {
+				if err := collectDependencies(dep, visited); err != nil {
+					return err
+				}
+			}
+			
+			// Then add the tool itself if not already installed
+			if !m.installEngine.IsToolInstalled(currentTool) {
+				toolsToInstall = append(toolsToInstall, currentTool)
+			}
+			
+			return nil
+		}
+		
+		visited := make(map[string]bool)
+		if err := collectDependencies(tool.Name, visited); err != nil {
+			return InstallationProgressMsg{
+				ToolName: tool.Name,
+				Status:   fmt.Sprintf("Dependency resolution failed: %v", err),
+				Success:  false,
+			}
+		}
+		
+		// If no tools need to be installed, the tool is already installed
+		if len(toolsToInstall) == 0 {
+			return InstallationProgressMsg{
+				ToolName: tool.Name,
+				Status:   fmt.Sprintf("%s is already installed", tool.Name),
+				Success:  true,
+			}
+		}
+		
+		// Install tools in dependency order
+		var results []string
+		for _, toolToInstall := range toolsToInstall {
+			result, err := m.installEngine.InstallTool(toolToInstall)
+			
+			success := result.Success && err == nil
+			if success {
+				m.toolInstallStatus[toolToInstall.Name] = true
+				
+				// Record successful installation
+				version := toolToInstall.Version
+				if version == "" {
+					version = "latest"
+				}
+				m.configManager.RecordToolInstallation(toolToInstall.Name, version, "manual")
+				results = append(results, fmt.Sprintf("✓ %s installed successfully", toolToInstall.Name))
+			} else {
+				message := result.Output
+				if err != nil {
+					message = fmt.Sprintf("Installation failed: %v", err)
+				}
+				results = append(results, fmt.Sprintf("✗ %s failed: %s", toolToInstall.Name, message))
+				
+				// If a dependency fails, stop the installation
+				return InstallationProgressMsg{
+					ToolName: tool.Name,
+					Status:   fmt.Sprintf("Installation failed due to dependency failure:\n%s", strings.Join(results, "\n")),
+					Success:  false,
+				}
+			}
 		}
 		
 		return InstallationProgressMsg{
 			ToolName: tool.Name,
-			Status:   message,
-			Success:  success,
+			Status:   fmt.Sprintf("Installation completed:\n%s", strings.Join(results, "\n")),
+			Success:  true,
 		}
 	}
 }
 
-// applyEnvironment applies a selected environment configuration
+// applyEnvironment applies a selected environment configuration with dependency resolution
 func (m MenuModel) applyEnvironment(env parser.Environment) (tea.Model, tea.Cmd) {
+	if m.installEngine == nil || m.dependencyResolver == nil {
+		return m, func() tea.Msg {
+			return InstallationProgressMsg{
+				ToolName: env.Name,
+				Status:   "Installation engine not initialized",
+				Success:  false,
+			}
+		}
+	}
+	
 	// Set loading state
 	m.isLoading = true
-	m.loadingMessage = fmt.Sprintf("Applying environment: %s", env.Name)
+	m.loadingMessage = fmt.Sprintf("Resolving dependencies for environment: %s", env.Name)
 	m.choices = m.getMenuChoices()
 	
 	return m, func() tea.Msg {
-		// Apply the environment configuration
-		// This would typically involve setting up shell configurations, environment variables, etc.
-		// For now, we'll simulate the process
+		// Get all available environments to resolve dependencies
+		allEnvironments, err := m.repoParser.FetchEnvironments()
+		if err != nil {
+			return InstallationProgressMsg{
+				ToolName: env.Name,
+				Status:   fmt.Sprintf("Failed to fetch environments for dependency resolution: %v", err),
+				Success:  false,
+			}
+		}
+		
+		// Find dependencies for this environment
+		var environmentsToApply []parser.Environment
+		envMap := make(map[string]parser.Environment)
+		for _, e := range allEnvironments {
+			envMap[e.Name] = e
+		}
+		
+		// Collect the environment and its dependencies
+		var collectDependencies func(envName string, visited map[string]bool) error
+		collectDependencies = func(envName string, visited map[string]bool) error {
+			if visited[envName] {
+				return nil // Already processed
+			}
+			
+			currentEnv, exists := envMap[envName]
+			if !exists {
+				return fmt.Errorf("environment dependency not found: %s", envName)
+			}
+			
+			visited[envName] = true
+			
+			// First, collect dependencies
+			for _, dep := range currentEnv.Dependencies {
+				if err := collectDependencies(dep, visited); err != nil {
+					return err
+				}
+			}
+			
+			// Then add the environment itself if not already applied
+			if !m.installEngine.IsEnvironmentApplied(currentEnv) {
+				environmentsToApply = append(environmentsToApply, currentEnv)
+			}
+			
+			return nil
+		}
+		
+		visited := make(map[string]bool)
+		if err := collectDependencies(env.Name, visited); err != nil {
+			return InstallationProgressMsg{
+				ToolName: env.Name,
+				Status:   fmt.Sprintf("Environment dependency resolution failed: %v", err),
+				Success:  false,
+			}
+		}
+		
+		// If no environments need to be applied, the environment is already applied
+		if len(environmentsToApply) == 0 {
+			return InstallationProgressMsg{
+				ToolName: env.Name,
+				Status:   fmt.Sprintf("Environment '%s' is already applied", env.Name),
+				Success:  true,
+			}
+		}
+		
+		// Apply environments in dependency order
+		var results []string
+		for _, envToApply := range environmentsToApply {
+			result, err := m.installEngine.ApplyEnvironment(envToApply)
+			
+			success := result.Success && err == nil
+			if success {
+				// Record successful application
+				results = append(results, fmt.Sprintf("✓ %s applied successfully", envToApply.Name))
+			} else {
+				message := result.Output
+				if err != nil {
+					message = fmt.Sprintf("Application failed: %v", err)
+				}
+				results = append(results, fmt.Sprintf("✗ %s failed: %s", envToApply.Name, message))
+				
+				// If a dependency fails, stop the application
+				return InstallationProgressMsg{
+					ToolName: env.Name,
+					Status:   fmt.Sprintf("Environment application failed due to dependency failure:\n%s", strings.Join(results, "\n")),
+					Success:  false,
+				}
+			}
+		}
 		
 		return InstallationProgressMsg{
 			ToolName: env.Name,
-			Status:   "Environment applied successfully",
+			Status:   fmt.Sprintf("Environment application completed:\n%s", strings.Join(results, "\n")),
 			Success:  true,
 		}
 	}
@@ -300,5 +472,83 @@ func (m MenuModel) resetAllEnvironmentOverrides() (tea.Model, tea.Cmd) {
 	// Update menu choices to reflect the changes
 	m.choices = m.getMenuChoices()
 	
+	return m, nil
+}
+
+// startSystemInstallation initiates the system installation process
+func (m MenuModel) startSystemInstallation() (tea.Model, tea.Cmd) {
+	if m.systemInstaller == nil {
+		return m, func() tea.Msg {
+			return SystemInstallationCompleteMsg{
+				Result: &installer.SystemInstallationResult{
+					Success: false,
+					Error:   fmt.Errorf("system installer not available"),
+					Message: "System installer could not be initialized",
+				},
+			}
+		}
+	}
+	
+	// Set loading state
+	m.isLoading = true
+	m.loadingMessage = "Installing BOBA to system..."
+	m.systemInstallResult = nil // Clear any previous result
+	m.choices = m.getMenuChoices()
+	
+	return m, func() tea.Msg {
+		result, err := m.systemInstaller.InstallToSystem()
+		if err != nil && result == nil {
+			result = &installer.SystemInstallationResult{
+				Success: false,
+				Error:   err,
+				Message: "System installation failed",
+			}
+		}
+		return SystemInstallationCompleteMsg{Result: result}
+	}
+}
+
+// startSystemUninstallation initiates the system uninstallation process
+func (m MenuModel) startSystemUninstallation() (tea.Model, tea.Cmd) {
+	if m.systemInstaller == nil {
+		return m, func() tea.Msg {
+			return SystemInstallationCompleteMsg{
+				Result: &installer.SystemInstallationResult{
+					Success: false,
+					Error:   fmt.Errorf("system installer not available"),
+					Message: "System installer could not be initialized",
+				},
+			}
+		}
+	}
+	
+	// Set loading state
+	m.isLoading = true
+	m.loadingMessage = "Uninstalling BOBA from system..."
+	m.systemInstallResult = nil // Clear any previous result
+	m.choices = m.getMenuChoices()
+	
+	return m, func() tea.Msg {
+		result, err := m.systemInstaller.UninstallFromSystem()
+		if err != nil && result == nil {
+			result = &installer.SystemInstallationResult{
+				Success: false,
+				Error:   err,
+				Message: "System uninstallation failed",
+			}
+		}
+		return SystemInstallationCompleteMsg{Result: result}
+	}
+}
+
+// showSystemInstallationDetails shows detailed information about system installation
+func (m MenuModel) showSystemInstallationDetails() (tea.Model, tea.Cmd) {
+	if m.systemInstaller == nil {
+		return m, nil
+	}
+	
+	// For now, just refresh the menu to show current status
+	// In a more advanced implementation, this could show a detailed view
+	m.choices = m.getMenuChoices()
 	return m, nil
 }

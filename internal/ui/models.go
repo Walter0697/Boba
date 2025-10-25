@@ -22,6 +22,7 @@ const (
 	ToolOverrideMenu
 	EnvironmentOverrideMenu
 	GitHubAuthMenu
+	SystemInstallMenu
 )
 
 // MenuModel represents the state of our menu system
@@ -36,6 +37,8 @@ type MenuModel struct {
 	authModel        *github.AuthModel
 	repoParser       *parser.RepositoryParser
 	installEngine    *installer.InstallationEngine
+	systemInstaller  *installer.SystemInstaller
+	dependencyResolver *installer.DependencyResolver
 	availableTools   []parser.Tool
 	toolInstallStatus map[string]bool // Cache for tool installation status
 	availableEnvironments []parser.Environment // Available environment configurations
@@ -43,9 +46,11 @@ type MenuModel struct {
 	loadingMessage   string
 	installationInProgress bool
 	installationResults    []InstallationResult
+	showingResults         bool // Flag to track if we're showing success/error results
 	installEverythingMode  bool // Flag to track if we're in "Install Everything" mode
 	pendingEnvironments    []parser.Environment // Environments to apply after tools
 	authError              string // Store authentication error for display
+	systemInstallResult    *installer.SystemInstallationResult // Result of system installation
 }
 
 // MenuItem represents a menu option
@@ -111,6 +116,12 @@ type EnvironmentApplicationNextMsg struct {
 
 type InstallationCompleteMsg struct {
 	Results []InstallationResult
+}
+
+type SystemInstallationStartMsg struct{}
+
+type SystemInstallationCompleteMsg struct {
+	Result *installer.SystemInstallationResult
 }
 
 // Init is called when the program starts
