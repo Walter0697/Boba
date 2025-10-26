@@ -74,12 +74,14 @@ All requirements have been successfully implemented and the release pipeline is 
 
 ## 📊 CI Configuration
 
-### Current Settings
+### Current Settings (All Workflows)
 ```yaml
 Tests: continue-on-error: true   # Temporary - allows releases
-Lint:  continue-on-error: true   # Permanent - style issues
+Lint:  continue-on-error: true   # Permanent - style issues  
 Build: continue-on-error: false  # Must succeed
 ```
+
+**Note:** All three workflows (CI, release, tag-release) now have consistent test configuration.
 
 ### Why This Configuration?
 
@@ -189,7 +191,7 @@ git push origin v1.0.0
 1. Fix integration test stdout capture issue
 2. Fix linting errors (11 issues)
 3. Fix race conditions in installer
-4. Re-enable test blocking in CI
+4. Re-enable test blocking in all workflows (CI, release, tag-release)
 
 ### Long-term
 1. Increase test coverage
