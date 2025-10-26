@@ -4,6 +4,38 @@ This document tracks linting issues found by golangci-lint that should be fixed 
 
 ## 📋 Current Issues
 
+### 0. Integration Test Failure (CRITICAL)
+
+**Issue:** Integration test failing - stdout not being captured properly.
+
+**Location:**
+- `internal/installer/integration_test.go:98` - Expected stdout to be captured
+
+**Root Cause:** The `executeScriptSecurely` function in `engine.go` is not properly capturing stdout/stderr output.
+
+**Impact:** Integration tests fail, CI set to non-blocking temporarily.
+
+**Fix:**
+
+The issue is in `internal/installer/engine.go` where stdout/stderr are being captured. The test expects to see "STDOUT:" in the output, but it's not being captured.
+
+```go
+// In engine.go, ensure stdout/stderr are properly captured and included in result
+func (e *InstallationEngine) executeScriptSecurely(...) (*InstallationResult, error) {
+    var stdout, stderr strings.Builder
+    
+    // Ensure these are properly synchronized and captured
+    cmd.Stdout = &stdout
+    cmd.Stderr = &stderr
+    
+    // ... execute command ...
+    
+    // Include in result
+    result.Output = fmt.Sprintf("STDOUT:\n%s\nSTDERR:\n%s", stdout.String(), stderr.String())
+    return result, nil
+}
+```
+
 ### 1. Unchecked Error Returns (errcheck)
 
 **Issue:** Error return values are not being checked.
@@ -115,6 +147,11 @@ _ = someFunction() // explicitly ignore return value
 ```
 
 ## 🎯 Priority
+
+### Critical Priority (Blocks Tests)
+0. 🔴 Integration test failure (`internal/installer/integration_test.go:98`)
+   - Tests are currently set to non-blocking because of this
+   - Should be fixed ASAP to re-enable test blocking
 
 ### High Priority (Affects Functionality)
 1. ✅ Unchecked errors in production code (`internal/ui/`, `internal/installer/engine.go`)
@@ -302,6 +339,10 @@ golangci-lint run internal/ui/initialization.go
 
 ## 📊 Progress Tracking
 
+### Critical
+- [ ] Fix `internal/installer/integration_test.go:98` - stdout capture issue
+
+### High Priority
 - [ ] Fix `internal/ui/initialization.go:18`
 - [ ] Fix `internal/ui/actions.go:243`
 - [ ] Fix `internal/installer/engine.go:44`
