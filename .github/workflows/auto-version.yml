@@ -1,7 +1,10 @@
 name: Auto Version and Release
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
     branches:
       - main
       - master
@@ -10,8 +13,18 @@ permissions:
   contents: write
 
 jobs:
+  # Only run if CI passed
+  check:
+    name: Check CI Status
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: CI passed
+        run: echo "CI passed, proceeding with release"
+
   auto-release:
     name: Auto Version and Release
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
