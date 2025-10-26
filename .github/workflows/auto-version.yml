@@ -1,0 +1,195 @@
+name: Auto Version and Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  auto-release:
+    name: Auto Version and Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history
+
+      - name: Determine version bump
+        id: version
+        run: |
+          # Get the latest tag
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "Latest tag: $LATEST_TAG"
+          
+          # Get commits since last tag
+          if [ "$LATEST_TAG" = "v0.0.0" ]; then
+            COMMITS=$(git log --pretty=format:"%s" --no-merges)
+          else
+            COMMITS=$(git log ${LATEST_TAG}..HEAD --pretty=format:"%s" --no-merges)
+          fi
+          
+          echo "Commits since last tag:"
+          echo "$COMMITS"
+          
+          # Determine version bump based on commit messages
+          MAJOR=false
+          MINOR=false
+          PATCH=false
+          
+          while IFS= read -r commit; do
+            # Check for breaking changes (major)
+            if echo "$commit" | grep -qiE "^[a-z]+(\([a-z]+\))?!:|BREAKING CHANGE:"; then
+              MAJOR=true
+            # Check for features (minor)
+            elif echo "$commit" | grep -qiE "^feat(\([a-z]+\))?:"; then
+              MINOR=true
+            # Check for fixes (patch)
+            elif echo "$commit" | grep -qiE "^fix(\([a-z]+\))?:|^perf(\([a-z]+\))?:|^refactor(\([a-z]+\))?:"; then
+              PATCH=true
+            fi
+          done <<< "$COMMITS"
+          
+          # Parse current version
+          CURRENT_VERSION=${LATEST_TAG#v}
+          IFS='.' read -r MAJOR_VER MINOR_VER PATCH_VER <<< "$CURRENT_VERSION"
+          
+          # Calculate new version
+          if [ "$MAJOR" = true ]; then
+            NEW_VERSION="$((MAJOR_VER + 1)).0.0"
+            BUMP_TYPE="major"
+          elif [ "$MINOR" = true ]; then
+            NEW_VERSION="${MAJOR_VER}.$((MINOR_VER + 1)).0"
+            BUMP_TYPE="minor"
+          elif [ "$PATCH" = true ]; then
+            NEW_VERSION="${MAJOR_VER}.${MINOR_VER}.$((PATCH_VER + 1))"
+            BUMP_TYPE="patch"
+          else
+            echo "No version bump needed (no feat/fix/breaking commits)"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "Version bump: $BUMP_TYPE"
+          echo "New version: v$NEW_VERSION"
+          echo "new_version=v$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "bump_type=$BUMP_TYPE" >> $GITHUB_OUTPUT
+          echo "should_release=true" >> $GITHUB_OUTPUT
+
+      - name: Set up Go
+        if: steps.version.outputs.should_release == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Run tests
+        if: steps.version.outputs.should_release == 'true'
+        run: go test -v ./...
+        continue-on-error: true
+
+      - name: Build multi-platform binaries
+        if: steps.version.outputs.should_release == 'true'
+        run: |
+          mkdir -p dist
+          
+          # Linux amd64
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
+            -ldflags="-s -w -X main.Version=${{ steps.version.outputs.new_version }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X main.GitCommit=${{ github.sha }}" \
+            -o dist/boba-linux-amd64 .
+          
+          # Linux arm64
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build \
+            -ldflags="-s -w -X main.Version=${{ steps.version.outputs.new_version }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X main.GitCommit=${{ github.sha }}" \
+            -o dist/boba-linux-arm64 .
+          
+          # macOS amd64
+          GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build \
+            -ldflags="-s -w -X main.Version=${{ steps.version.outputs.new_version }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X main.GitCommit=${{ github.sha }}" \
+            -o dist/boba-darwin-amd64 .
+          
+          # macOS arm64
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build \
+            -ldflags="-s -w -X main.Version=${{ steps.version.outputs.new_version }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X main.GitCommit=${{ github.sha }}" \
+            -o dist/boba-darwin-arm64 .
+          
+          # Windows amd64
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build \
+            -ldflags="-s -w -X main.Version=${{ steps.version.outputs.new_version }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X main.GitCommit=${{ github.sha }}" \
+            -o dist/boba-windows-amd64.exe .
+
+      - name: Create archives
+        if: steps.version.outputs.should_release == 'true'
+        run: |
+          cd dist
+          tar -czf boba-linux-amd64.tar.gz boba-linux-amd64
+          tar -czf boba-linux-arm64.tar.gz boba-linux-arm64
+          tar -czf boba-darwin-amd64.tar.gz boba-darwin-amd64
+          tar -czf boba-darwin-arm64.tar.gz boba-darwin-arm64
+          zip boba-windows-amd64.zip boba-windows-amd64.exe
+          sha256sum *.tar.gz *.zip > checksums.txt
+
+      - name: Generate release notes
+        if: steps.version.outputs.should_release == 'true'
+        id: release_notes
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          
+          if [ -z "$LATEST_TAG" ]; then
+            COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges)
+          else
+            COMMITS=$(git log ${LATEST_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          fi
+          
+          cat > release_notes.md << EOF
+          ## 🎉 BOBA ${{ steps.version.outputs.new_version }}
+          
+          **Version Bump:** ${{ steps.version.outputs.bump_type }}
+          
+          ### 📝 What's Changed
+          
+          $COMMITS
+          
+          ### 📦 Installation
+          
+          #### Linux (amd64)
+          \`\`\`bash
+          wget https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.new_version }}/boba-linux-amd64.tar.gz
+          tar -xzf boba-linux-amd64.tar.gz
+          sudo mv boba-linux-amd64 /usr/local/bin/boba
+          chmod +x /usr/local/bin/boba
+          \`\`\`
+          
+          #### macOS (Apple Silicon)
+          \`\`\`bash
+          wget https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.new_version }}/boba-darwin-arm64.tar.gz
+          tar -xzf boba-darwin-arm64.tar.gz
+          sudo mv boba-darwin-arm64 /usr/local/bin/boba
+          chmod +x /usr/local/bin/boba
+          \`\`\`
+          
+          #### Windows
+          Download \`boba-windows-amd64.zip\`, extract it, and add to your PATH.
+          
+          ### 🔐 Checksums
+          See \`checksums.txt\` for SHA256 checksums.
+          EOF
+
+      - name: Create tag and release
+        if: steps.version.outputs.should_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.new_version }}
+          name: Release ${{ steps.version.outputs.new_version }}
+          body_path: release_notes.md
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
