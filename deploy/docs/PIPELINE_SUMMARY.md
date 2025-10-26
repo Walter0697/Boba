@@ -24,6 +24,7 @@ This document provides an overview of the automated release pipeline implemented
 **Purpose:** Automated development releases
 
 **Features:**
+- **Only runs after CI workflow succeeds** (for branch pushes)
 - Multi-platform binary builds (5 platforms)
 - Automated testing before build
 - Development version tagging (`v0.0.0-dev-<hash>`)
@@ -31,8 +32,8 @@ This document provides an overview of the automated release pipeline implemented
 - Automatic release notes generation
 
 **Triggers:**
-- Pushes to main/master branches
-- Version tags (v*)
+- Successful completion of CI workflow on main/master branches
+- Version tags (v*) - runs independently with own tests
 
 #### Tagged Release Workflow (`.github/workflows/tag-release.yml`)
 **Purpose:** Official production releases

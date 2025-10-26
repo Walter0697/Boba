@@ -1,10 +1,14 @@
 name: Release
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
     branches:
       - main
       - master
+  push:
     tags:
       - 'v*'
 
@@ -12,8 +16,20 @@ permissions:
   contents: write
 
 jobs:
+  # Only run if CI passed or this is a tag push
+  check:
+    name: Check CI Status
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    steps:
+      - name: CI passed or tag push
+        run: echo "Proceeding with release"
+
   test:
     name: Run Tests
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -26,10 +42,7 @@ jobs:
 
       - name: Run tests
         run: go test -v ./...
-
-      - name: Run integration tests
-        run: go test -v -tags=integration ./...
-        continue-on-error: true
+        continue-on-error: false
 
   build:
     name: Build Multi-Platform Binaries
