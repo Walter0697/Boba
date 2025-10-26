@@ -338,9 +338,28 @@ func (ie *InstallationEngine) executeScriptSecurely(scriptPath, toolName string)
 		stderrDone <- true
 	}()
 	
-	// Wait for the command to complete
-	fmt.Printf("DEBUG: Waiting for command to complete...\n")
-	err = cmd.Wait()
+	// Wait for the command to complete with timeout monitoring
+	fmt.Printf("DEBUG: Waiting for command to complete (timeout: 10 minutes)...\n")
+	
+	// Create a done channel to signal completion
+	cmdDone := make(chan error, 1)
+	go func() {
+		cmdDone <- cmd.Wait()
+	}()
+	
+	// Wait for either completion or timeout
+	select {
+	case err = <-cmdDone:
+		// Command completed normally
+		fmt.Printf("DEBUG: Command completed\n")
+	case <-ctx.Done():
+		// Timeout occurred
+		fmt.Printf("DEBUG: Command timed out after 10 minutes, killing process...\n")
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+		err = fmt.Errorf("command timed out after 10 minutes")
+	}
 	
 	// Wait for output readers to finish
 	<-stdoutDone
@@ -635,9 +654,28 @@ func (ie *InstallationEngine) executeEnvironmentScriptSecurely(scriptPath, envNa
 		stderrDone <- true
 	}()
 	
-	// Wait for the command to complete
-	fmt.Printf("DEBUG: Waiting for command to complete...\n")
-	err = cmd.Wait()
+	// Wait for the command to complete with timeout monitoring
+	fmt.Printf("DEBUG: Waiting for command to complete (timeout: 10 minutes)...\n")
+	
+	// Create a done channel to signal completion
+	cmdDone := make(chan error, 1)
+	go func() {
+		cmdDone <- cmd.Wait()
+	}()
+	
+	// Wait for either completion or timeout
+	select {
+	case err = <-cmdDone:
+		// Command completed normally
+		fmt.Printf("DEBUG: Command completed\n")
+	case <-ctx.Done():
+		// Timeout occurred
+		fmt.Printf("DEBUG: Command timed out after 10 minutes, killing process...\n")
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+		err = fmt.Errorf("command timed out after 10 minutes")
+	}
 	
 	// Wait for output readers to finish
 	<-stdoutDone

@@ -108,8 +108,11 @@ func (m MenuModel) runUpdateEverythingWithProgress() tea.Cmd {
 // installNextTool installs the next tool in the sequence with progress feedback
 func (m MenuModel) installNextTool(tools []parser.Tool, currentIndex int, results []InstallationResult) tea.Cmd {
 	if currentIndex >= len(tools) {
+		fmt.Printf("\n=== All Tools Processed ===\n")
+		fmt.Printf("Total tools: %d\n", len(results))
 		// All tools processed, check if we need to move to environments phase
 		if m.installEverythingMode && len(m.pendingEnvironments) > 0 {
+			fmt.Printf("Moving to environments phase...\n")
 			// Move to environments phase
 			return func() tea.Msg {
 				return InstallEverythingPhaseMsg{
@@ -129,8 +132,17 @@ func (m MenuModel) installNextTool(tools []parser.Tool, currentIndex int, result
 	return func() tea.Msg {
 		currentTool := tools[currentIndex]
 		
+		fmt.Printf("\n=== Processing Tool %d/%d ===\n", currentIndex+1, len(tools))
+		fmt.Printf("Tool: %s\n", currentTool.Name)
+		fmt.Printf("This is a BLOCKING operation - next tool will wait\n")
+		
 		// Install the tool
+		// This call BLOCKS until the tool installation is complete
 		result, err := m.installEngine.InstallTool(currentTool)
+		
+		fmt.Printf("\n=== Tool %s Completed ===\n", currentTool.Name)
+		fmt.Printf("Success: %v\n", result.Success)
+		fmt.Printf("Duration: %v\n", result.Duration)
 		
 		success := result.Success && err == nil
 		message := result.Output
@@ -155,6 +167,8 @@ func (m MenuModel) installNextTool(tools []parser.Tool, currentIndex int, result
 			Error:    err,
 		})
 		
+		fmt.Printf("Moving to next tool (if any)...\n")
+		
 		// Continue with next tool
 		return InstallationNextMsg{
 			Tools:        tools,
@@ -167,6 +181,8 @@ func (m MenuModel) installNextTool(tools []parser.Tool, currentIndex int, result
 // applyNextEnvironment applies the next environment in the sequence with progress feedback
 func (m MenuModel) applyNextEnvironment(environments []parser.Environment, currentIndex int, results []EnvironmentApplicationResult) tea.Cmd {
 	if currentIndex >= len(environments) {
+		fmt.Printf("\n=== All Environments Processed ===\n")
+		fmt.Printf("Total environments: %d\n", len(results))
 		// All environments processed, convert results to InstallationResult format and complete
 		var installResults []InstallationResult
 		for _, result := range results {
@@ -186,8 +202,17 @@ func (m MenuModel) applyNextEnvironment(environments []parser.Environment, curre
 	return func() tea.Msg {
 		currentEnv := environments[currentIndex]
 		
+		fmt.Printf("\n=== Processing Environment %d/%d ===\n", currentIndex+1, len(environments))
+		fmt.Printf("Environment: %s\n", currentEnv.Name)
+		fmt.Printf("This is a BLOCKING operation - next environment will wait\n")
+		
 		// Apply the environment configuration using the installation engine
+		// This call BLOCKS until the environment setup is complete
 		installResult, err := m.installEngine.ApplyEnvironment(currentEnv)
+		
+		fmt.Printf("\n=== Environment %s Completed ===\n", currentEnv.Name)
+		fmt.Printf("Success: %v\n", installResult.Success)
+		fmt.Printf("Duration: %v\n", installResult.Duration)
 		
 		success := installResult.Success && err == nil
 		message := installResult.Output
@@ -204,6 +229,8 @@ func (m MenuModel) applyNextEnvironment(environments []parser.Environment, curre
 		
 		// Add result to the list
 		newResults := append(results, result)
+		
+		fmt.Printf("Moving to next environment (if any)...\n")
 		
 		// Continue with next environment
 		return EnvironmentApplicationNextMsg{
