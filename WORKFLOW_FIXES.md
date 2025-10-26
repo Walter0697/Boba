@@ -169,6 +169,32 @@ Comprehensive guide covering:
 - Optimize view rendering code
 - Or adjust performance threshold if current performance is acceptable
 
+### 3. Linting Errors
+
+**Locations:** Multiple files
+
+**Issues:**
+- Unchecked error returns (errcheck)
+- Unused fields (unused)
+- Ineffectual assignments (ineffassign)
+
+**Impact:** Linting fails but doesn't block CI (set to continue-on-error).
+
+**Recommendation:** Fix these in a separate PR:
+```go
+// Example fixes:
+// 1. Check error returns
+if err := configManager.LoadConfig(); err != nil {
+    return err
+}
+
+// 2. Remove unused fields
+// Delete unused struct fields
+
+// 3. Fix ineffectual assignments
+// Use the assigned value or remove the assignment
+```
+
 ## 🚀 Next Steps
 
 ### Immediate
@@ -241,11 +267,46 @@ Check the Actions tab to see:
 ✅ Production Release: CREATED (if tests pass)
 ```
 
+## 🔧 CI Configuration
+
+### Linting is Non-Blocking
+
+The CI workflow is configured to allow linting errors without blocking:
+
+```yaml
+- name: Run golangci-lint
+  uses: golangci/golangci-lint-action@v6
+  with:
+    version: latest
+    args: --timeout=5m
+  continue-on-error: true  # Linting won't block CI
+```
+
+### Build Doesn't Wait for Lint
+
+The build job only waits for tests, not linting:
+
+```yaml
+build:
+  needs: [test]  # Only waits for tests, not lint
+  if: always()   # Runs even if lint fails
+```
+
+This means:
+- ✅ Tests must pass for CI to succeed
+- ⚠️ Linting errors are reported but don't block
+- ✅ Releases can proceed even with linting warnings
+
+## 📋 Linting Issues
+
+Current linting issues are documented in [LINTING_ISSUES.md](LINTING_ISSUES.md) and should be fixed in future PRs. They don't block releases but should be addressed for code quality.
+
 ## ✅ Summary
 
 - **Release workflow now requires CI to pass** ✅
 - **No more releases with failing tests** ✅
 - **Tag releases still work independently** ✅
+- **Linting is non-blocking** ✅
 - **Comprehensive documentation added** ✅
 - **Known issues documented for future fixes** ✅
 
