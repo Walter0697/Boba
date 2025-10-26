@@ -138,7 +138,11 @@ func (ie *InstallationEngine) InstallTool(tool parser.Tool) (*InstallationResult
 	
 	startTime := time.Now()
 	
+	fmt.Printf("\n=== Installing Tool: %s ===\n", tool.Name)
+	fmt.Printf("Script path: %s\n", tool.InstallScript)
+	
 	// Download the install script
+	fmt.Printf("Downloading install script...\n")
 	scriptContent, err := ie.githubClient.GetRepositoryContents(tool.InstallScript)
 	if err != nil {
 		return &InstallationResult{
@@ -150,6 +154,7 @@ func (ie *InstallationEngine) InstallTool(tool parser.Tool) (*InstallationResult
 	
 	// Create a temporary script file
 	scriptPath := filepath.Join(ie.tempDir, fmt.Sprintf("install_%s.sh", tool.FolderName))
+	fmt.Printf("Creating temporary script at: %s\n", scriptPath)
 	if err := os.WriteFile(scriptPath, scriptContent, 0755); err != nil {
 		return &InstallationResult{
 			Success:  false,
@@ -162,7 +167,11 @@ func (ie *InstallationEngine) InstallTool(tool parser.Tool) (*InstallationResult
 	defer os.Remove(scriptPath)
 	
 	// Execute the script with security measures
+	fmt.Printf("Executing installation script...\n")
+	fmt.Printf("==========================================\n")
 	result := ie.executeScriptSecurely(scriptPath, tool.Name)
+	fmt.Printf("==========================================\n")
+	fmt.Printf("Installation completed with exit code: %d\n", result.ExitCode)
 	result.Duration = time.Since(startTime)
 	
 	return result, result.Error
@@ -176,7 +185,11 @@ func (ie *InstallationEngine) UninstallTool(tool parser.Tool) (*InstallationResu
 	
 	startTime := time.Now()
 	
+	fmt.Printf("\n=== Uninstalling Tool: %s ===\n", tool.Name)
+	fmt.Printf("Script path: %s\n", tool.UninstallScript)
+	
 	// Download the uninstall script
+	fmt.Printf("Downloading uninstall script...\n")
 	scriptContent, err := ie.githubClient.GetRepositoryContents(tool.UninstallScript)
 	if err != nil {
 		return &InstallationResult{
@@ -188,6 +201,7 @@ func (ie *InstallationEngine) UninstallTool(tool parser.Tool) (*InstallationResu
 	
 	// Create a temporary script file
 	scriptPath := filepath.Join(ie.tempDir, fmt.Sprintf("uninstall_%s.sh", tool.FolderName))
+	fmt.Printf("Creating temporary script at: %s\n", scriptPath)
 	if err := os.WriteFile(scriptPath, scriptContent, 0755); err != nil {
 		return &InstallationResult{
 			Success:  false,
@@ -200,7 +214,11 @@ func (ie *InstallationEngine) UninstallTool(tool parser.Tool) (*InstallationResu
 	defer os.Remove(scriptPath)
 	
 	// Execute the script with security measures
+	fmt.Printf("Executing uninstall script...\n")
+	fmt.Printf("==========================================\n")
 	result := ie.executeScriptSecurely(scriptPath, tool.Name)
+	fmt.Printf("==========================================\n")
+	fmt.Printf("Uninstallation completed with exit code: %d\n", result.ExitCode)
 	result.Duration = time.Since(startTime)
 	
 	return result, result.Error
@@ -212,14 +230,20 @@ func (ie *InstallationEngine) executeScriptSecurely(scriptPath, toolName string)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	
+	fmt.Printf("DEBUG: Preparing to execute script\n")
+	fmt.Printf("DEBUG: Script path: %s\n", scriptPath)
+	fmt.Printf("DEBUG: Tool name: %s\n", toolName)
+	
 	// Prepare the command
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		// On Windows, use PowerShell or cmd to execute scripts
 		cmd = exec.CommandContext(ctx, "powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+		fmt.Printf("DEBUG: Using PowerShell to execute script\n")
 	} else {
 		// On Unix-like systems, use bash
 		cmd = exec.CommandContext(ctx, "/bin/bash", scriptPath)
+		fmt.Printf("DEBUG: Using bash to execute script\n")
 	}
 	
 	// Set up environment variables
@@ -233,12 +257,19 @@ func (ie *InstallationEngine) executeScriptSecurely(scriptPath, toolName string)
 		fmt.Sprintf("TMP=%s", ie.tempDir),
 	)
 	
+	fmt.Printf("DEBUG: Environment variables set:\n")
+	fmt.Printf("  BOBA_TOOL_NAME=%s\n", toolName)
+	fmt.Printf("  BOBA_PLATFORM=%s\n", ie.platform.OS)
+	fmt.Printf("  BOBA_PACKAGE_MANAGER=%s\n", ie.platform.PackageManager)
+	
 	// Set working directory to temp directory
 	cmd.Dir = ie.tempDir
+	fmt.Printf("DEBUG: Working directory: %s\n", ie.tempDir)
 	
 	// Create pipes for stdout and stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		fmt.Printf("DEBUG: Failed to create stdout pipe: %v\n", err)
 		return &InstallationResult{
 			Success: false,
 			Error:   fmt.Errorf("failed to create stdout pipe: %w", err),
@@ -247,42 +278,74 @@ func (ie *InstallationEngine) executeScriptSecurely(scriptPath, toolName string)
 	
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
+		fmt.Printf("DEBUG: Failed to create stderr pipe: %v\n", err)
 		return &InstallationResult{
 			Success: false,
 			Error:   fmt.Errorf("failed to create stderr pipe: %w", err),
 		}
 	}
 	
+	fmt.Printf("DEBUG: Pipes created successfully\n")
+	
 	// Start the command
+	fmt.Printf("DEBUG: Starting command...\n")
 	if err := cmd.Start(); err != nil {
+		fmt.Printf("DEBUG: Failed to start command: %v\n", err)
 		return &InstallationResult{
 			Success: false,
 			Error:   fmt.Errorf("failed to start script: %w", err),
 		}
 	}
 	
+	fmt.Printf("DEBUG: Command started successfully, PID: %d\n", cmd.Process.Pid)
+	fmt.Printf("DEBUG: Reading output...\n\n")
+	
 	// Capture output
 	var outputBuilder strings.Builder
+	
+	// Use channels to synchronize goroutines
+	stdoutDone := make(chan bool)
+	stderrDone := make(chan bool)
 	
 	// Read stdout and stderr concurrently
 	go func() {
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
 			line := scanner.Text()
-			outputBuilder.WriteString("STDOUT: " + line + "\n")
+			// Print to console in real-time
+			fmt.Println(line)
+			// Also capture for result
+			outputBuilder.WriteString(line + "\n")
 		}
+		if err := scanner.Err(); err != nil {
+			fmt.Printf("DEBUG: Error reading stdout: %v\n", err)
+		}
+		stdoutDone <- true
 	}()
 	
 	go func() {
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
 			line := scanner.Text()
+			// Print to console in real-time (to stderr)
+			fmt.Fprintln(os.Stderr, line)
+			// Also capture for result
 			outputBuilder.WriteString("STDERR: " + line + "\n")
 		}
+		if err := scanner.Err(); err != nil {
+			fmt.Printf("DEBUG: Error reading stderr: %v\n", err)
+		}
+		stderrDone <- true
 	}()
 	
 	// Wait for the command to complete
+	fmt.Printf("DEBUG: Waiting for command to complete...\n")
 	err = cmd.Wait()
+	
+	// Wait for output readers to finish
+	<-stdoutDone
+	<-stderrDone
+	fmt.Printf("\nDEBUG: Output reading completed\n")
 	
 	// Get exit code
 	exitCode := 0
@@ -292,10 +355,17 @@ func (ie *InstallationEngine) executeScriptSecurely(scriptPath, toolName string)
 				exitCode = status.ExitStatus()
 			}
 		}
+		fmt.Printf("DEBUG: Command finished with error: %v\n", err)
+	} else {
+		fmt.Printf("DEBUG: Command finished successfully\n")
 	}
 	
 	output := outputBuilder.String()
 	success := exitCode == 0
+	
+	fmt.Printf("DEBUG: Exit code: %d\n", exitCode)
+	fmt.Printf("DEBUG: Success: %v\n", success)
+	fmt.Printf("DEBUG: Output length: %d bytes\n", len(output))
 	
 	result := &InstallationResult{
 		Success:  success,
@@ -304,7 +374,7 @@ func (ie *InstallationEngine) executeScriptSecurely(scriptPath, toolName string)
 	}
 	
 	if !success {
-		result.Error = fmt.Errorf("script execution failed with exit code %d: %s", exitCode, output)
+		result.Error = fmt.Errorf("script execution failed with exit code %d", exitCode)
 	}
 	
 	return result
@@ -363,7 +433,11 @@ func (ie *InstallationEngine) ApplyEnvironment(env parser.Environment) (*Install
 	
 	startTime := time.Now()
 	
+	fmt.Printf("\n=== Applying Environment: %s ===\n", env.Name)
+	fmt.Printf("Script path: %s\n", env.SetupScript)
+	
 	// Download the setup script
+	fmt.Printf("Downloading setup script...\n")
 	scriptContent, err := ie.githubClient.GetRepositoryContents(env.SetupScript)
 	if err != nil {
 		return &InstallationResult{
@@ -375,6 +449,7 @@ func (ie *InstallationEngine) ApplyEnvironment(env parser.Environment) (*Install
 	
 	// Create a temporary script file
 	scriptPath := filepath.Join(ie.tempDir, fmt.Sprintf("setup_%s.sh", env.FolderName))
+	fmt.Printf("Creating temporary script at: %s\n", scriptPath)
 	if err := os.WriteFile(scriptPath, scriptContent, 0755); err != nil {
 		return &InstallationResult{
 			Success:  false,
@@ -387,7 +462,11 @@ func (ie *InstallationEngine) ApplyEnvironment(env parser.Environment) (*Install
 	defer os.Remove(scriptPath)
 	
 	// Execute the setup script with security measures
+	fmt.Printf("Executing setup script...\n")
+	fmt.Printf("==========================================\n")
 	result := ie.executeEnvironmentScriptSecurely(scriptPath, env.Name, env)
+	fmt.Printf("==========================================\n")
+	fmt.Printf("Environment setup completed with exit code: %d\n", result.ExitCode)
 	result.Duration = time.Since(startTime)
 	
 	return result, result.Error
@@ -401,7 +480,11 @@ func (ie *InstallationEngine) RestoreEnvironment(env parser.Environment) (*Insta
 	
 	startTime := time.Now()
 	
+	fmt.Printf("\n=== Restoring Environment: %s ===\n", env.Name)
+	fmt.Printf("Script path: %s\n", env.RestoreScript)
+	
 	// Download the restore script
+	fmt.Printf("Downloading restore script...\n")
 	scriptContent, err := ie.githubClient.GetRepositoryContents(env.RestoreScript)
 	if err != nil {
 		return &InstallationResult{
@@ -413,6 +496,7 @@ func (ie *InstallationEngine) RestoreEnvironment(env parser.Environment) (*Insta
 	
 	// Create a temporary script file
 	scriptPath := filepath.Join(ie.tempDir, fmt.Sprintf("restore_%s.sh", env.FolderName))
+	fmt.Printf("Creating temporary script at: %s\n", scriptPath)
 	if err := os.WriteFile(scriptPath, scriptContent, 0755); err != nil {
 		return &InstallationResult{
 			Success:  false,
@@ -425,7 +509,11 @@ func (ie *InstallationEngine) RestoreEnvironment(env parser.Environment) (*Insta
 	defer os.Remove(scriptPath)
 	
 	// Execute the restore script with security measures
+	fmt.Printf("Executing restore script...\n")
+	fmt.Printf("==========================================\n")
 	result := ie.executeEnvironmentScriptSecurely(scriptPath, env.Name, env)
+	fmt.Printf("==========================================\n")
+	fmt.Printf("Environment restore completed with exit code: %d\n", result.ExitCode)
 	result.Duration = time.Since(startTime)
 	
 	return result, result.Error
@@ -437,14 +525,20 @@ func (ie *InstallationEngine) executeEnvironmentScriptSecurely(scriptPath, envNa
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	
+	fmt.Printf("DEBUG: Preparing to execute environment script\n")
+	fmt.Printf("DEBUG: Script path: %s\n", scriptPath)
+	fmt.Printf("DEBUG: Environment name: %s\n", envName)
+	
 	// Prepare the command
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		// On Windows, use PowerShell or cmd to execute scripts
 		cmd = exec.CommandContext(ctx, "powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+		fmt.Printf("DEBUG: Using PowerShell to execute script\n")
 	} else {
 		// On Unix-like systems, use bash
 		cmd = exec.CommandContext(ctx, "/bin/bash", scriptPath)
+		fmt.Printf("DEBUG: Using bash to execute script\n")
 	}
 	
 	// Set up environment variables
@@ -459,12 +553,20 @@ func (ie *InstallationEngine) executeEnvironmentScriptSecurely(scriptPath, envNa
 		fmt.Sprintf("TMP=%s", ie.tempDir),
 	)
 	
+	fmt.Printf("DEBUG: Environment variables set:\n")
+	fmt.Printf("  BOBA_ENV_NAME=%s\n", envName)
+	fmt.Printf("  BOBA_ENV_SHELL=%s\n", env.Shell)
+	fmt.Printf("  BOBA_PLATFORM=%s\n", ie.platform.OS)
+	fmt.Printf("  BOBA_PACKAGE_MANAGER=%s\n", ie.platform.PackageManager)
+	
 	// Set working directory to temp directory
 	cmd.Dir = ie.tempDir
+	fmt.Printf("DEBUG: Working directory: %s\n", ie.tempDir)
 	
 	// Create pipes for stdout and stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		fmt.Printf("DEBUG: Failed to create stdout pipe: %v\n", err)
 		return &InstallationResult{
 			Success: false,
 			Error:   fmt.Errorf("failed to create stdout pipe: %w", err),
@@ -473,42 +575,74 @@ func (ie *InstallationEngine) executeEnvironmentScriptSecurely(scriptPath, envNa
 	
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
+		fmt.Printf("DEBUG: Failed to create stderr pipe: %v\n", err)
 		return &InstallationResult{
 			Success: false,
 			Error:   fmt.Errorf("failed to create stderr pipe: %w", err),
 		}
 	}
 	
+	fmt.Printf("DEBUG: Pipes created successfully\n")
+	
 	// Start the command
+	fmt.Printf("DEBUG: Starting command...\n")
 	if err := cmd.Start(); err != nil {
+		fmt.Printf("DEBUG: Failed to start command: %v\n", err)
 		return &InstallationResult{
 			Success: false,
 			Error:   fmt.Errorf("failed to start environment script: %w", err),
 		}
 	}
 	
+	fmt.Printf("DEBUG: Command started successfully, PID: %d\n", cmd.Process.Pid)
+	fmt.Printf("DEBUG: Reading output...\n\n")
+	
 	// Capture output
 	var outputBuilder strings.Builder
+	
+	// Use channels to synchronize goroutines
+	stdoutDone := make(chan bool)
+	stderrDone := make(chan bool)
 	
 	// Read stdout and stderr concurrently
 	go func() {
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
 			line := scanner.Text()
-			outputBuilder.WriteString("STDOUT: " + line + "\n")
+			// Print to console in real-time
+			fmt.Println(line)
+			// Also capture for result
+			outputBuilder.WriteString(line + "\n")
 		}
+		if err := scanner.Err(); err != nil {
+			fmt.Printf("DEBUG: Error reading stdout: %v\n", err)
+		}
+		stdoutDone <- true
 	}()
 	
 	go func() {
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
 			line := scanner.Text()
+			// Print to console in real-time (to stderr)
+			fmt.Fprintln(os.Stderr, line)
+			// Also capture for result
 			outputBuilder.WriteString("STDERR: " + line + "\n")
 		}
+		if err := scanner.Err(); err != nil {
+			fmt.Printf("DEBUG: Error reading stderr: %v\n", err)
+		}
+		stderrDone <- true
 	}()
 	
 	// Wait for the command to complete
+	fmt.Printf("DEBUG: Waiting for command to complete...\n")
 	err = cmd.Wait()
+	
+	// Wait for output readers to finish
+	<-stdoutDone
+	<-stderrDone
+	fmt.Printf("\nDEBUG: Output reading completed\n")
 	
 	// Get exit code
 	exitCode := 0
@@ -518,10 +652,17 @@ func (ie *InstallationEngine) executeEnvironmentScriptSecurely(scriptPath, envNa
 				exitCode = status.ExitStatus()
 			}
 		}
+		fmt.Printf("DEBUG: Command finished with error: %v\n", err)
+	} else {
+		fmt.Printf("DEBUG: Command finished successfully\n")
 	}
 	
 	output := outputBuilder.String()
 	success := exitCode == 0
+	
+	fmt.Printf("DEBUG: Exit code: %d\n", exitCode)
+	fmt.Printf("DEBUG: Success: %v\n", success)
+	fmt.Printf("DEBUG: Output length: %d bytes\n", len(output))
 	
 	result := &InstallationResult{
 		Success:  success,
@@ -530,7 +671,7 @@ func (ie *InstallationEngine) executeEnvironmentScriptSecurely(scriptPath, envNa
 	}
 	
 	if !success {
-		result.Error = fmt.Errorf("environment script execution failed with exit code %d: %s", exitCode, output)
+		result.Error = fmt.Errorf("environment script execution failed with exit code %d", exitCode)
 	}
 	
 	return result
